@@ -1,0 +1,9 @@
+[package]
+name = "foo"
+version = "0.1.0"
+authors = ["Matthew Harm Bekkema <mbekkema97@gmail.com>"]
+
+lib = []
+
+[dependencies]
+HSfoo = { path = "../HSfoo" }
