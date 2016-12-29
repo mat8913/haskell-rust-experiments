@@ -1,23 +1,18 @@
 extern crate gcc;
 
-use std::io::BufReader;
-use std::io::BufRead;
 use std::fs::read_dir;
 use std::fs::File;
 use std::path::Path;
 use std::process::Command;
 use std::process::Stdio;
 use std::str;
+use std::io;
 
 fn main() {
-    for x in link_haskell_package("rust-haskell-hsbits", Path::new("hsbits")) {
-        println!("{}", x);
-    }
+    link_haskell_package("rust-haskell-hsbits", Path::new("hsbits"));
 }
 
-fn link_haskell_package(name: &str, path: &Path) -> Vec<String> {
-    let mut ret: Vec<String> = Vec::new();
-
+fn link_haskell_package(name: &str, path: &Path) {
     // Build the package
     call_command(Command::new("cabal")
                          .arg("build")
@@ -25,11 +20,8 @@ fn link_haskell_package(name: &str, path: &Path) -> Vec<String> {
                  "failed to build haskell package");
 
     // Link to the dependencies
-    let opts_file   = File::open(path.join("dist").join("build").join("cargoOpts")).unwrap();
-    let opts_reader = BufReader::new(opts_file);
-    for x in opts_reader.lines() {
-        ret.push(x.unwrap());
-    }
+    let mut opts_file = File::open(path.join("dist").join("build").join("cargoOpts")).unwrap();
+    io::copy(&mut opts_file, &mut io::stdout()).unwrap();
 
     // Link to the package
     let mut compiler = gcc::Config::new();
@@ -40,8 +32,6 @@ fn link_haskell_package(name: &str, path: &Path) -> Vec<String> {
         }
     }
     compiler.compile(&format!("libHS{}.a", name));
-
-    return ret;
 }
 
 fn strip_prefix_suffix<'a>(prefix : &str, suffix : &str, string : &'a str) -> Option<&'a str> {
