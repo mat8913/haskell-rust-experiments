@@ -2,7 +2,7 @@ name:                rust-haskell-hsbits
 version:             0.1.0.0
 author:              Matthew Harm Bekkema
 maintainer:          mbekkema97@gmail.com
-build-type:          Simple
+build-type:          Custom
 cabal-version:       >=1.10
 
 library

@@ -19,37 +19,13 @@ fn link_haskell_package(name: &str, path: &Path) -> Vec<String> {
     let mut ret: Vec<String> = Vec::new();
 
     // Build the package
-    let ghc_libdir = call_command(Command::new("cabal")
-                                          .arg("exec")
-                                          .arg("--")
-                                          .arg("ghc")
-                                          .arg("--print-libdir")
-                                          .current_dir(&path),
-                                  "failed to get ghc libdir").stdout;
-    let ghc_rtsdir: String = format!("{}/rts", str::from_utf8(&ghc_libdir).unwrap().trim());
-    call_command(Command::new("cabal")
-                         .arg("exec")
-                         .arg("--")
-                         .arg("ghc")
-                         .arg("-DLIBSUFFIX=\".so\"")
-                         .arg("-DWANTEDRTS=\"\"")
-                         .arg(format!("-DGHCRTSDIR={:?}", ghc_rtsdir))
-                         .arg("mylinker.hs")
-                         .current_dir(&path),
-                 "failed to compile \"linker\"");
-    call_command(Command::new("cabal")
-                         .arg("configure")
-                         .arg("--ghc-option=-pgml./mylinker")
-                         .arg("--enable-shared")
-                         .current_dir(&path),
-                 "failed to configure haskell package");
     call_command(Command::new("cabal")
                          .arg("build")
                          .current_dir(&path),
                  "failed to build haskell package");
 
     // Link to the dependencies
-    let opts_file   = File::open(path.join("dist").join("cargoOpts")).unwrap();
+    let opts_file   = File::open(path.join("dist").join("build").join("cargoOpts")).unwrap();
     let opts_reader = BufReader::new(opts_file);
     for x in opts_reader.lines() {
         ret.push(x.unwrap());
