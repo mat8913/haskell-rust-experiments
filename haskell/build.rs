@@ -7,6 +7,7 @@ use std::process::Command;
 use std::process::Stdio;
 use std::str;
 use std::io;
+use std::env;
 
 fn main() {
     link_haskell_package("rust-haskell-hsbits", Path::new("hsbits"));
@@ -14,18 +15,21 @@ fn main() {
 
 fn link_haskell_package(name: &str, path: &Path) {
     // Build the package
+    let builddir = Path::new(&env::var("OUT_DIR").unwrap()).join(format!("HS{}-dist", name));
     call_command(Command::new("cabal")
                          .arg("build")
+                         .arg("--builddir")
+                         .arg(builddir.to_str().unwrap())
                          .current_dir(&path),
                  "failed to build haskell package");
 
     // Link to the dependencies
-    let mut opts_file = File::open(path.join("dist").join("build").join("cargoOpts")).unwrap();
+    let mut opts_file = File::open(builddir.join("build").join("cargoOpts")).unwrap();
     io::copy(&mut opts_file, &mut io::stdout()).unwrap();
 
     // Link to the package
     let mut compiler = gcc::Config::new();
-    for entry in read_dir(path.join("dist").join("build")).unwrap() {
+    for entry in read_dir(builddir.join("build")).unwrap() {
         let entry = entry.unwrap();
         if let Some(_) = entry.file_name().to_str().and_then(|x| strip_prefix_suffix("", ".dyn_o", x)) {
             compiler.object(entry.path());
