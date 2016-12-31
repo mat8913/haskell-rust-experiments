@@ -3,9 +3,16 @@
 import Control.Monad (unless)
 import Data.Maybe (mapMaybe, fromMaybe)
 import Data.List (foldl', nub, sort)
-import System.FilePath ((</>))
+
+import GHC.IO.Exception (ioe_type, IOErrorType(InappropriateType))
+import Control.Exception (IOException, tryJust)
+import System.Directory (listDirectory)
+import System.FilePath ((</>), takeExtension)
 
 import Distribution.Simple hiding (installedUnitId)
+import Distribution.Simple.BuildPaths
+import Distribution.Simple.Program.Ar
+import Distribution.Verbosity
 import Distribution.Simple.LocalBuildInfo
 import Distribution.Simple.PackageIndex
 import Distribution.Compiler
@@ -24,19 +31,39 @@ cargoMain = cargoMainWithHooks simpleUserHooks
 cargoMainWithHooks hooks = defaultMainWithHooks $ hooks
     { buildHook = modBuildHook $ buildHook hooks }
 
-modBuildHook x pkg_descr localbuildinfo hooks flags = do
-    cargoHook localbuildinfo
-    x pkg_descr localbuildinfo hooks flags
+getLibBuildInfo :: (ComponentName, ComponentLocalBuildInfo, a)
+                -> Maybe (UnitId, [(UnitId, PackageId)])
+getLibBuildInfo ( CLibName
+                , LibComponentLocalBuildInfo { componentUnitId
+                                             , componentPackageDeps}
+                , _
+                ) = Just (componentUnitId, componentPackageDeps)
+getLibBuildInfo _ = Nothing
 
-cargoHook :: LocalBuildInfo -> IO ()
-cargoHook lbi@LocalBuildInfo {buildDir} = unless (null opts) $
-    writeFile (buildDir </> "cargoOpts") $ unlines opts
-  where
-    opts = getCargoOptions lbi
+modBuildHook x pkg_descr lbi@LocalBuildInfo { buildDir
+                                            , compiler
+                                            } hooks flags =
+    case exactlyOne $ mapMaybe getLibBuildInfo $ componentsConfigs lbi of
+        Nothing -> x pkg_descr lbi hooks flags
+        Just (libUnitId, libDeps) -> do
+            let cId = getCId compiler
+                linkerOpts = getLinkerOptions lbi libDeps
+                cargoOpts = map (toCargoOption cId) linkerOpts
+                hsLibName = getHSLibraryName libUnitId
+                libName = mkLibName libUnitId
 
-getCargoOptions :: LocalBuildInfo -> [String]
-getCargoOptions lbi@LocalBuildInfo {compiler} =
-    map (toCargoOption $ getCId compiler) $ getLinkerOptions lbi
+            x pkg_descr
+              lbi {withVanillaLib = False, withSharedLib = True}
+              hooks
+              flags
+
+            buildDirFiles <- recurseDirs buildDir
+            let objFiles = filter ((".dyn_o"==) . takeExtension) buildDirFiles
+            createArLibArchive normal lbi (buildDir </> libName) objFiles
+
+            putStrLn $ "cargo:rustc-link-lib=static=" ++ hsLibName
+            putStrLn $ "cargo:rustc-link-search=native=" ++ buildDir
+            mapM_ putStrLn cargoOpts
 
 toCargoOption :: String -> LinkerOption -> String
 toCargoOption _   (LinkPath p) = "cargo:rustc-link-search=native=" ++ p
@@ -47,12 +74,9 @@ toCargoOption cId (LinkHs l)   = "cargo:rustc-link-lib=dylib=" ++ l
 getCId :: Compiler -> String
 getCId Compiler {compilerId = CompilerId flv ver} = display flv ++ display ver
 
-getLinkerOptions :: LocalBuildInfo -> [LinkerOption]
-getLinkerOptions LocalBuildInfo { installedPkgs
-                                , componentsConfigs
-                                } = maybe [] allLinkerOptions $
-    exactlyOne $ mapMaybe (\(_,x,_) -> getLibDepends installedPkgs x)
-                          componentsConfigs
+getLinkerOptions :: LocalBuildInfo -> [(UnitId, PackageId)] -> [LinkerOption]
+getLinkerOptions LocalBuildInfo {installedPkgs} =
+    allLinkerOptions . getLibDepends installedPkgs
 
 allLinkerOptions :: InstalledPackageIndex -> [LinkerOption]
 allLinkerOptions = nub . sort . concatMap packageLinkerOptions . allPackages
@@ -67,13 +91,23 @@ packageLinkerOptions InstalledPackageInfo { libraryDirs
            , map LinkLib  extraLibraries
            ]
 
+getLibDepends :: InstalledPackageIndex -> [(UnitId, PackageId)] -> InstalledPackageIndex
+getLibDepends iPkgs deps =
+    case dependencyClosure iPkgs (map fst deps) of
+        Left x -> x
+
 exactlyOne :: [a] -> Maybe a
 exactlyOne [x] = Just x
 exactlyOne _   = Nothing
 
-getLibDepends :: InstalledPackageIndex -> ComponentLocalBuildInfo -> Maybe InstalledPackageIndex
-getLibDepends iPkgs LibComponentLocalBuildInfo {componentPackageDeps = deps} =
-    case dependencyClosure iPkgs (map fst deps) of
-        Left x  -> Just x
-        Right _ -> Nothing
-getLibDepends _ _ = Nothing
+recurseDirs :: FilePath -> IO [FilePath]
+recurseDirs fp = listDirectory' fp >>=
+    maybe (return [fp]) (fmap concat . mapM (recurseDirs . (fp</>)))
+
+listDirectory' :: FilePath -> IO (Maybe [FilePath])
+listDirectory' = fmap (either (const Nothing) Just) . tryJust eFilter . listDirectory
+  where
+    eFilter :: IOException -> Maybe ()
+    eFilter ex = case ioe_type ex of
+        InappropriateType -> Just ()
+        _                 -> Nothing

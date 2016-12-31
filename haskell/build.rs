@@ -1,12 +1,6 @@
-extern crate gcc;
-
-use std::fs::read_dir;
-use std::fs::File;
 use std::path::Path;
 use std::process::Command;
 use std::process::Stdio;
-use std::str;
-use std::io;
 use std::env;
 
 fn main() {
@@ -14,36 +8,14 @@ fn main() {
 }
 
 fn link_haskell_package(name: &str, path: &Path) {
-    // Build the package
     let builddir = Path::new(&env::var("OUT_DIR").unwrap()).join(format!("HS{}-dist", name));
     call_command(Command::new("cabal")
                          .arg("build")
                          .arg("--builddir")
                          .arg(builddir.to_str().unwrap())
-                         .current_dir(&path),
+                         .current_dir(&path)
+                         .stdout(Stdio::inherit()),
                  "failed to build haskell package");
-
-    // Link to the dependencies
-    let mut opts_file = File::open(builddir.join("build").join("cargoOpts")).unwrap();
-    io::copy(&mut opts_file, &mut io::stdout()).unwrap();
-
-    // Link to the package
-    let mut compiler = gcc::Config::new();
-    for entry in read_dir(builddir.join("build")).unwrap() {
-        let entry = entry.unwrap();
-        if let Some(_) = entry.file_name().to_str().and_then(|x| strip_prefix_suffix("", ".dyn_o", x)) {
-            compiler.object(entry.path());
-        }
-    }
-    compiler.compile(&format!("libHS{}.a", name));
-}
-
-fn strip_prefix_suffix<'a>(prefix : &str, suffix : &str, string : &'a str) -> Option<&'a str> {
-    if string.starts_with(prefix) && string.ends_with(suffix) {
-        Some(&string[prefix.len() .. string.len() - suffix.len()])
-    } else {
-        None
-    }
 }
 
 fn call_command(cmd: &mut Command, failmsg: &str) -> std::process::Output {
